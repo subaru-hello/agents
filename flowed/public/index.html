@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flowed TODO アプリ</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .todo-form {
+            margin-bottom: 20px;
+        }
+        .todo-list {
+            list-style: none;
+            padding: 0;
+        }
+        .todo-item {
+            padding: 10px;
+            border: 1px solid #ddd;
+            margin-bottom: 5px;
+            border-radius: 4px;
+        }
+        .processing-result {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+        }
+        .task-flow {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+        .error-message {
+            color: #dc3545;
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Flowed TODO アプリ</h1>
+    
+    <div class="todo-form">
+        <input type="text" id="todoInput" placeholder="新しいTODOを入力">
+        <button onclick="addTodo()">追加</button>
+        <div id="errorMessage" class="error-message"></div>
+    </div>
+
+    <ul id="todoList" class="todo-list"></ul>
+
+    <div id="processingResult" class="processing-result" style="display: none;">
+        <h3>処理結果</h3>
+        <div id="taskFlow" class="task-flow"></div>
+    </div>
+
+    <script>
+        // TODOリストを取得
+        async function fetchTodos() {
+            const response = await fetch('/api/todos');
+            const data = await response.json();
+            const todoList = document.getElementById('todoList');
+            todoList.innerHTML = '';
+            
+            data.forEach(todo => {
+                const li = document.createElement('li');
+                li.className = 'todo-item';
+                li.textContent = todo.text;
+                todoList.appendChild(li);
+            });
+        }
+
+        // 新しいTODOを追加
+        async function addTodo() {
+            const input = document.getElementById('todoInput');
+            const text = input.value.trim();
+            const errorMessage = document.getElementById('errorMessage');
+            
+            // エラーメッセージをクリア
+            errorMessage.style.display = 'none';
+            errorMessage.textContent = '';
+            
+            if (text) {
+                try {
+                    const response = await fetch('/api/todos', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ text })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    // エラーの場合
+                    if (!result.success) {
+                        errorMessage.textContent = result.error || 'エラーが発生しました';
+                        errorMessage.style.display = 'block';
+                        return;
+                    }
+                    
+                    input.value = '';
+                    
+                    // 処理結果の表示
+                    const processingResult = document.getElementById('processingResult');
+                    const taskFlow = document.getElementById('taskFlow');
+                    
+                    processingResult.style.display = 'block';
+                    
+                    // 結果の表示を更新
+                    let resultHtml = '';
+                    
+                    if (result.todo) {
+                        resultHtml += `
+                            <h4>追加されたTODO</h4>
+                            <pre>${JSON.stringify(result.todo, null, 2)}</pre>
+                        `;
+                    }
+                    
+                    resultHtml += `
+                        <h4>並行処理フロー</h4>
+                        <pre>${JSON.stringify(result.parallelResult, null, 2)}</pre>
+                    `;
+                    
+                    taskFlow.innerHTML = resultHtml;
+                    
+                    fetchTodos();
+                } catch (error) {
+                    console.error('エラー:', error);
+                    errorMessage.textContent = 'サーバーとの通信中にエラーが発生しました';
+                    errorMessage.style.display = 'block';
+                }
+            } else {
+                errorMessage.textContent = 'テキストを入力してください';
+                errorMessage.style.display = 'block';
+            }
+        }
+
+        // 初期表示
+        fetchTodos();
+    </script>
+</body>
+</html> 

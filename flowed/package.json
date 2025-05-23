@@ -1,0 +1,28 @@
+{
+  "name": "flowed-todo-app",
+  "version": "1.0.0",
+  "description": "Simple TODO application using flowed and Hono",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node dist/index.js",
+    "debug": "node --inspect dist/index.js",
+    "build": "tsc",
+    "dev": "tsc --watch & node --watch dist/index.js",
+    "format": "npx @biomejs/biome format --write src"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.2",
+    "flowed": "^1.15.0",
+    "hono": "^4.7.10",
+    "zod": "^3.25.23"
+  },
+  "volta": {
+    "node": "20.19.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}
