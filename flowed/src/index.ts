@@ -7,10 +7,12 @@ import { z } from "zod";
 
 // Zodスキーマの定義
 const TodoInputSchema = z.object({
-	text: z
-		.string()
-		.min(1, "テキストは必須です")
-		.max(100, "テキストは100文字以内にしてください"),
+	args: z.object({
+		text: z
+			.string()
+			.min(1, "テキストは必須です")
+			.max(100, "テキストは100文字以内にしてください"),
+	}),
 });
 
 // 型定義
@@ -44,12 +46,18 @@ let todos: Todo[] = [];
 
 // カスタムリゾルバーの作成
 const customResolvers = {
-	"app::validateInput": async (params: { input: unknown }) => {
+	"app::validateInput": async (params: { args: TodoInput["args"] }) => {
 		logger.debug("受付係: 入力を検証中", params);
+
+		// 入力がない場合はエラー
+		if (!params.args) {
+			logger.debug("受付係: 入力がありません");
+			return { validatedInput: null, error: "入力データがありません" };
+		}
 
 		// Zodを使ってバリデーション
 		try {
-			const validatedInput = TodoInputSchema.parse(params.input);
+			const validatedInput = TodoInputSchema.parse(params.args);
 			logger.debug("受付係: 検証完了", validatedInput);
 			return { validatedInput, error: null };
 		} catch (error) {
@@ -61,30 +69,24 @@ const customResolvers = {
 			throw error;
 		}
 	},
-	"app::processTodo": async (params: {
-		validatedInput: TodoInput;
-		error: string | null;
-	}) => {
+	"app::processTodo": async (params) => {
 		logger.debug("処理係: TODOを処理中", params);
 
 		// エラーがある場合は処理を中断
-		if (params.error) {
-			return { todo: null, error: params.error };
+		if (params.error || !params.validatedInput) {
+			return { todo: null, error: params.error || "入力データがありません" };
 		}
 
 		// TODOにIDや日時などを追加
-		const todo: Todo = {
-			...params.validatedInput,
+		const todo = {
 			id: Date.now(),
+			text: params.validatedInput.text, // textを明示的に設定
 			createdAt: new Date().toISOString(),
 		};
 		logger.debug("処理係: 処理完了", todo);
 		return { todo, error: null };
 	},
-	"app::storeTodo": async (params: {
-		todo: Todo | null;
-		error: string | null;
-	}) => {
+	"app::storeTodo": async (params) => {
 		logger.debug("保存係: TODOを保存中", params);
 
 		// エラーがある場合は処理を中断
@@ -97,10 +99,7 @@ const customResolvers = {
 		logger.debug("保存係: 保存完了", todos.length);
 		return { savedTodo: params.todo, error: null };
 	},
-	"app::notifyCompletion": async (params: {
-		savedTodo: Todo | null;
-		error: string | null;
-	}) => {
+	"app::notifyCompletion": async (params) => {
 		logger.debug("通知係: 処理完了を通知", params);
 
 		// エラーがある場合は処理結果にエラーを含める
@@ -113,23 +112,17 @@ const customResolvers = {
 	},
 };
 
-// カスタムリゾルバーのオブジェクト
-const resolvers: Record<string, Function> = {};
-Object.entries(customResolvers).forEach(([name, resolver]) => {
-	resolvers[name] = resolver;
-});
-
 // TODOタスクの処理フロー
 const todoProcessingFlow = {
 	tasks: {
 		// 受付係：リクエストの検証
 		receptionist: {
-			requires: ["input"],
+			requires: ["args"],
 			provides: ["validatedInput", "error"],
 			resolver: {
 				name: "app::validateInput",
 				params: {
-					input: "${input}",
+					args: "${args}",
 				},
 			},
 		},
@@ -218,70 +211,62 @@ const parallelProcessingFlow = {
 
 // APIエンドポイント
 app.post("/api/todos", async (c) => {
-	let todoInput = {};
-
-	// Content-Typeに応じてリクエストボディを処理
-	const contentType = c.req.header("Content-Type") || "";
-	
-	if (contentType.includes("application/json")) {
-		// JSONリクエストの処理
-		todoInput = await c.req.json().catch(() => ({}));
-	} else if (contentType.includes("application/x-www-form-urlencoded")) {
-		// フォームデータの処理
-		const formData = await c.req.parseBody().catch(() => ({}));
-		if (typeof formData === 'object' && formData !== null && 'text' in formData) {
-			todoInput = { text: String(formData.text) };
-		}
-	} else {
-		// その他のContent-Type
-		return c.json(
-			{
-				success: false,
-				error: "サポートされていないContent-Typeです",
-			},
-			415
-		);
-	}
-
+	let todoInput = await c.req.json();
 	console.log("リクエスト受信:", todoInput);
 	logger.info("新しいTODOリクエスト受信:", todoInput);
-	
+
 	try {
-		// TODOの処理フローを実行
 		const flowResult = await FlowManager.run(
 			todoProcessingFlow,
 			{
 				input: todoInput,
 			},
 			[],
-			{ resolvers: resolvers as any },
+			customResolvers,
 		);
 		logger.info("TODOフロー完了:", flowResult);
-		
-		// 処理結果にエラーがある場合は400エラーを返す
-		if (!flowResult.processingResult.success) {
+
+		// 処理結果がない場合
+		if (!flowResult || !flowResult.processingResult) {
 			return c.json(
 				{
 					success: false,
-					error: flowResult.processingResult.error,
+					error: "処理結果が取得できませんでした",
+				},
+				500,
+			);
+		}
+
+		// 処理結果にエラーがある場合は400エラーを返す
+		if (
+			typeof flowResult.processingResult === "object" &&
+			"success" in flowResult.processingResult &&
+			!flowResult.processingResult.success
+		) {
+			return c.json(
+				{
+					success: false,
+					error:
+						flowResult.processingResult.error || "不明なエラーが発生しました",
 				},
 				400,
 			);
 		}
-		
-		// 並行処理のデモフローを実行
-		// @ts-ignore -- 型が一致しない問題を一時的に回避
+
 		const parallelResult = await FlowManager.run(
 			parallelProcessingFlow,
 			{},
 			[],
-			{ resolvers: resolvers as any },
+			customResolvers,
 		);
 		logger.info("並行処理フロー完了:", parallelResult);
-		
+
+		// TODOが正常に作成された場合の応答
+		const todo = flowResult.processingResult.todo;
+
 		return c.json({
 			success: true,
-			todo: flowResult.processingResult.todo,
+			todo: todo,
 			todos,
 			parallelResult: parallelResult.parallelResult,
 		});
