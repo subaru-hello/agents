@@ -1,8 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { serveStatic } from "hono/serve-static";
-import { FlowManager } from "flowed";
-import type { Context, Env } from "hono";
+import { FlowManager, ValueMap } from "flowed";
 import { z } from "zod";
 
 // Zodスキーマの定義
@@ -46,18 +45,19 @@ let todos: Todo[] = [];
 
 // カスタムリゾルバーの作成
 const customResolvers = {
-	"app::validateInput": async (params: { args: TodoInput["args"] }) => {
-		logger.debug("受付係: 入力を検証中", params);
+	"app::validateInput": async (params: ValueMap) => {
+		const args = params.args;
+		logger.debug("受付係: 入力を検証中", args);
 
 		// 入力がない場合はエラー
-		if (!params.args) {
+		if (!args) {
 			logger.debug("受付係: 入力がありません");
 			return { validatedInput: null, error: "入力データがありません" };
 		}
 
 		// Zodを使ってバリデーション
 		try {
-			const validatedInput = TodoInputSchema.parse(params.args);
+			const validatedInput = TodoInputSchema.parse({ args });
 			logger.debug("受付係: 検証完了", validatedInput);
 			return { validatedInput, error: null };
 		} catch (error) {
@@ -69,7 +69,7 @@ const customResolvers = {
 			throw error;
 		}
 	},
-	"app::processTodo": async (params) => {
+	"app::processTodo": async (params: ValueMap) => {
 		logger.debug("処理係: TODOを処理中", params);
 
 		// エラーがある場合は処理を中断
@@ -80,13 +80,13 @@ const customResolvers = {
 		// TODOにIDや日時などを追加
 		const todo = {
 			id: Date.now(),
-			text: params.validatedInput.text, // textを明示的に設定
+			text: params?.validatedInput?.args?.text, // textを明示的に設定
 			createdAt: new Date().toISOString(),
 		};
 		logger.debug("処理係: 処理完了", todo);
 		return { todo, error: null };
 	},
-	"app::storeTodo": async (params) => {
+	"app::storeTodo": async (params: ValueMap) => {
 		logger.debug("保存係: TODOを保存中", params);
 
 		// エラーがある場合は処理を中断
@@ -99,7 +99,7 @@ const customResolvers = {
 		logger.debug("保存係: 保存完了", todos.length);
 		return { savedTodo: params.todo, error: null };
 	},
-	"app::notifyCompletion": async (params) => {
+	"app::notifyCompletion": async (params: ValueMap) => {
 		logger.debug("通知係: 処理完了を通知", params);
 
 		// エラーがある場合は処理結果にエラーを含める
@@ -219,7 +219,7 @@ app.post("/api/todos", async (c) => {
 		const flowResult = await FlowManager.run(
 			todoProcessingFlow,
 			{
-				input: todoInput,
+				args: todoInput,
 			},
 			[],
 			customResolvers,
