@@ -6,279 +6,309 @@ import { z } from "zod";
 
 // Zodスキーマの定義
 const TodoInputSchema = z.object({
-	args: z.object({
-		text: z
-			.string()
-			.min(1, "テキストは必須です")
-			.max(100, "テキストは100文字以内にしてください"),
-	}),
+	text: z
+		.string()
+		.min(1, "テキストは必須です")
+		.max(100, "テキストは100文字以内にしてください"),
 });
-
-// 型定義
-interface Todo {
-	id: number;
-	text: string;
-	createdAt: string;
-}
-
-interface Logger {
-	debug: (...args: any[]) => void;
-	info: (...args: any[]) => void;
-	error: (...args: any[]) => void;
-}
-
-// Zodから型を生成
-type TodoInput = z.infer<typeof TodoInputSchema>;
 
 const app = new Hono();
 const port = 3000;
 
-// デバッグ用のロガー
-const logger: Logger = {
-	debug: (...args: any[]) => console.log("DEBUG:", ...args),
-	info: (...args: any[]) => console.log("INFO:", ...args),
-	error: (...args: any[]) => console.error("ERROR:", ...args),
+const MVP_NAMES = {
+	step1: "step1",
+	step2: "step2",
 };
+// 最小構成のリゾルバー
+const mvpResolvers = {
+	[MVP_NAMES.step1]: async (params: ValueMap) => {
+		console.log("Step1: 受信したparams:", JSON.stringify(params, null, 2));
+		const input = params.input;
 
-// メモリ内のTODOリスト
-let todos: Todo[] = [];
-
-// カスタムリゾルバーの作成
-const customResolvers = {
-	"app::validateInput": async (params: ValueMap) => {
-		const args = params.args;
-		logger.debug("受付係: 入力を検証中", args);
-
-		// 入力がない場合はエラー
-		if (!args) {
-			logger.debug("受付係: 入力がありません");
-			return { validatedInput: null, error: "入力データがありません" };
+		if (!input) {
+			console.log("Step1: inputが見つかりません、デフォルト値を使用");
+			return { step1Result: "Step1処理完了: デフォルト値" };
 		}
 
-		// Zodを使ってバリデーション
-		try {
-			const validatedInput = TodoInputSchema.parse({ args });
-			logger.debug("受付係: 検証完了", validatedInput);
-			return { validatedInput, error: null };
-		} catch (error) {
-			if (error instanceof z.ZodError) {
-				const errorMessage = error.errors.map((e) => e.message).join(", ");
-				logger.debug("受付係: 検証エラー", errorMessage);
-				return { validatedInput: null, error: errorMessage };
-			}
-			throw error;
-		}
+		const result = { step1Result: `Step1処理完了: ${input}` };
+		console.log("Step1: 結果:", result);
+		return result;
 	},
-	"app::processTodo": async (params: ValueMap) => {
-		logger.debug("処理係: TODOを処理中", params);
+	[MVP_NAMES.step2]: async (params: ValueMap) => {
+		console.log("Step2: 受信したparams:", JSON.stringify(params, null, 2));
+		const step1Result = params.step1Result;
 
-		// エラーがある場合は処理を中断
-		if (params.error || !params.validatedInput) {
-			return { todo: null, error: params.error || "入力データがありません" };
+		if (!step1Result) {
+			console.log("Step2: step1Resultが見つかりません");
+			return { step2Result: "Step2処理完了: step1Resultなし -> 変換済み" };
 		}
 
-		// TODOにIDや日時などを追加
-		const todo = {
-			id: Date.now(),
-			text: params?.validatedInput?.args?.text, // textを明示的に設定
-			createdAt: new Date().toISOString(),
-		};
-		logger.debug("処理係: 処理完了", todo);
-		return { todo, error: null };
-	},
-	"app::storeTodo": async (params: ValueMap) => {
-		logger.debug("保存係: TODOを保存中", params);
-
-		// エラーがある場合は処理を中断
-		if (params.error || !params.todo) {
-			return { savedTodo: null, error: params.error };
-		}
-
-		// 実際の保存ロジック（今回はメモリに保存）
-		todos.push(params.todo);
-		logger.debug("保存係: 保存完了", todos.length);
-		return { savedTodo: params.todo, error: null };
-	},
-	"app::notifyCompletion": async (params: ValueMap) => {
-		logger.debug("通知係: 処理完了を通知", params);
-
-		// エラーがある場合は処理結果にエラーを含める
-		if (params.error) {
-			return { result: { success: false, error: params.error, todo: null } };
-		}
-
-		// 実際の通知ロジック
-		return { result: { success: true, error: null, todo: params.savedTodo } };
+		const result = { step2Result: `Step2処理完了: ${step1Result} -> 変換済み` };
+		console.log("Step2: 結果:", result);
+		return result;
 	},
 };
 
-// TODOタスクの処理フロー
-const todoProcessingFlow = {
+// 最小構成のフロー
+const mvpFlow = {
 	tasks: {
-		// 受付係：リクエストの検証
-		receptionist: {
-			requires: ["args"],
-			provides: ["validatedInput", "error"],
+		firstTask: {
+			requires: ["input"],
+			provides: ["step1Result"],
 			resolver: {
-				name: "app::validateInput",
+				name: MVP_NAMES.step1,
 				params: {
-					args: "${args}",
+					input: "input",
+				},
+				results: {
+					step1Result: "step1Result",
 				},
 			},
 		},
-		// 処理係：TODOの作成
-		processor: {
-			requires: ["validatedInput", "error"],
-			provides: ["todo", "error"],
+		secondTask: {
+			requires: ["step1Result"],
+			provides: ["step2Result"],
 			resolver: {
-				name: "app::processTodo",
+				name: MVP_NAMES.step2,
 				params: {
-					validatedInput: "${validatedInput}",
-					error: "${error}",
+					step1Result: "step1Result",
+				},
+				results: {
+					step2Result: "step2Result",
 				},
 			},
 		},
-		// 保存係：TODOの保存
-		storage: {
-			requires: ["todo", "error"],
-			provides: ["savedTodo", "error"],
-			resolver: {
-				name: "app::storeTodo",
-				params: {
-					todo: "${todo}",
-					error: "${error}",
-				},
-			},
-		},
-		// 通知係：処理完了の通知
-		notifier: {
-			requires: ["savedTodo", "error"],
-			provides: ["result"],
-			resolver: {
-				name: "app::notifyCompletion",
-				params: {
-					savedTodo: "${savedTodo}",
-					error: "${error}",
-				},
-			},
-		},
-	},
-	// フローの結果として返す値を指定
-	results: {
-		processingResult: "result",
 	},
 };
 
-// 並行処理のデモ用フロー
-const parallelProcessingFlow = {
-	tasks: {
-		// 並行して実行されるタスク
-		taskA: {
-			provides: ["resultA"],
-			resolver: {
-				name: "flowed::Noop",
-				params: {
-					value: "TaskA completed",
-				},
-			},
-		},
-		taskB: {
-			provides: ["resultB"],
-			resolver: {
-				name: "flowed::Noop",
-				params: {
-					value: "TaskB completed",
-				},
-			},
-		},
-		// 上記のタスクの結果を待って実行されるタスク
-		taskC: {
-			requires: ["resultA", "resultB"],
-			provides: ["finalResult"],
-			resolver: {
-				name: "flowed::Noop",
-				params: {
-					value: "All tasks completed",
-				},
-			},
-		},
-	},
-	// フローの結果として返す値を指定
-	results: {
-		parallelResult: "finalResult",
-	},
-};
+// MVPエンドポイント
+app.post("/api/mvp", async (c) => {
+	const body = await c.req.json();
+	console.log("リクエスト受信:", body);
 
-// APIエンドポイント
-app.post("/api/todos", async (c) => {
-	let todoInput = await c.req.json();
-	console.log("リクエスト受信:", todoInput);
-	logger.info("新しいTODOリクエスト受信:", todoInput);
+	const initialParams = {
+		input: body.message || body.text || "デフォルトメッセージ",
+	};
+	console.log("初期パラメータ:", initialParams);
 
 	try {
-		const flowResult = await FlowManager.run(
-			todoProcessingFlow,
-			{
-				args: todoInput,
-			},
-			[],
-			customResolvers,
+		console.log("ENDPOINT: MVP フロー実行開始");
+		const result = await FlowManager.run(
+			mvpFlow,
+			initialParams,
+			["step2Result"], //expectedResults は最終的に取得したい結果を書く。フローの最後で返しているオブジェクトになる
+			mvpResolvers,
 		);
-		logger.info("TODOフロー完了:", flowResult);
 
-		// 処理結果がない場合
-		if (!flowResult || !flowResult.processingResult) {
-			return c.json(
-				{
-					success: false,
-					error: "処理結果が取得できませんでした",
-				},
-				500,
-			);
-		}
-
-		// 処理結果にエラーがある場合は400エラーを返す
-		if (
-			typeof flowResult.processingResult === "object" &&
-			"success" in flowResult.processingResult &&
-			!flowResult.processingResult.success
-		) {
-			return c.json(
-				{
-					success: false,
-					error:
-						flowResult.processingResult.error || "不明なエラーが発生しました",
-				},
-				400,
-			);
-		}
-
-		const parallelResult = await FlowManager.run(
-			parallelProcessingFlow,
-			{},
-			[],
-			customResolvers,
-		);
-		logger.info("並行処理フロー完了:", parallelResult);
-
-		// TODOが正常に作成された場合の応答
-		const todo = flowResult.processingResult.todo;
+		console.log("ENDPOINT: MVP フロー完了:", JSON.stringify(result, null, 2));
 
 		return c.json({
 			success: true,
-			todo: todo,
-			todos,
-			parallelResult: parallelResult.parallelResult,
+			result: result.step2Result,
+			fullResult: result,
 		});
 	} catch (error) {
-		logger.error("フロー実行エラー:", error);
+		console.error("ENDPOINT: MVP エラー:", error);
 		return c.json({ success: false, error: (error as Error).message }, 500);
 	}
 });
 
-app.get("/api/todos", async (c) => {
-	logger.info("TODOリスト取得リクエスト");
-	return c.json(todos);
+// https://github.com/danielduarte/flowed/blob/main/test/multi-process-flow.ts
+app.post("/api/multi-task", async (c) => {
+	let msgCount = 1;
+	let msgCount2 = 1;
+	let msgCount3 = 1;
+	const output: string[] = [];
+
+	class ProvideMessage1 {
+		public async exec(params?: ValueMap): Promise<ValueMap> {
+			console.log("ProvideMessage1: メッセージを提供中", params);
+
+			return {
+				message1: `Message1 number ${msgCount++}`,
+			};
+		}
+	}
+
+	class ProvideMessage2 {
+		public async exec(params?: ValueMap): Promise<ValueMap> {
+			console.log("ProvideMessage2: メッセージを提供中", params);
+			return {
+				message2: `Message2 number ${msgCount2++}`,
+			};
+		}
+	}
+
+	class ProvideMessage3 {
+		public async exec(params?: ValueMap): Promise<ValueMap> {
+			console.log("ProvideMessage3: メッセージを提供中", params);
+			console.log("ProvideMessage3: 受信したmessage1:", params?.message1);
+			console.log("ProvideMessage3: 受信したmessage2:", params?.message2);
+
+			return {
+				message3: `Combined: ${params?.message1} + ${params?.message2} = Message3 number ${msgCount3++}`,
+			};
+		}
+	}
+
+	class ProvideNumber1 {
+		public async exec(params?: ValueMap): Promise<ValueMap> {
+			console.log("ProvideNumber1: params", params);
+			const number1 = 1;
+			console.log("ProvideNumber1: 数値を提供中", number1);
+			return {
+				number1,
+			};
+		}
+	}
+
+	class ConsoleLog {
+		public async exec(params: ValueMap): Promise<ValueMap> {
+			output.push("Incoming message: " + params.text);
+			console.log("ConsoleLog: メッセージを出力中", params.text);
+			return { result: params.text };
+		}
+	}
+
+	class ConsoleNumber {
+		public async exec(params: ValueMap): Promise<ValueMap> {
+			console.log("ConsoleNumber: 数値を出力中", params);
+			return {
+				result: params.number,
+			};
+		}
+	}
+
+	class Calculate {
+		public async exec(params: ValueMap): Promise<ValueMap> {
+			console.log("Calculate: 計算中", params);
+			const result = params.number1 + 2 * 12;
+			console.log("Calculate: 計算結果", result);
+			return {
+				calcResult: result,
+			};
+		}
+	}
+
+	const result = await FlowManager.run(
+		{
+			tasks: {
+				msg1: {
+					provides: ["message1"],
+					resolver: {
+						name: "provideMsg1",
+						results: {
+							message1: "message1",
+						},
+					},
+				},
+				msg2: {
+					provides: ["message2"],
+					resolver: {
+						name: "provideMsg2",
+						results: {
+							message2: "message2",
+						},
+					},
+				},
+				// msg1とmsg2の並行処理
+				msg3: {
+					// requiresにはobject名を書く。msg1ではなく、msg1がprovideしているmessage1を書く。
+					requires: ["message1", "message2"],
+					// providesには次の並行処理に渡したいobj名を書く
+					provides: ["message3"],
+					// resolverにはヘルパー処理を書く
+					resolver: {
+						// 利用するヘルパー関数名
+						name: "provideMsg3",
+						params: {
+							message1: "message1",
+							message2: "message2",
+						},
+						results: {
+							message3: "message3",
+						},
+					},
+				},
+				num1: {
+					provides: ["number1"],
+					resolver: {
+						name: "provideNumber1",
+						results: {
+							number1: "number1",
+						},
+					},
+				},
+				calc: {
+					requires: ["number1"],
+					provides: ["calcResult"],
+					resolver: {
+						name: "calculate",
+						params: { number1: "number1" },
+						results: {
+							calcResult: "calcResult",
+						},
+					},
+				},
+				printMessage: {
+					requires: ["message3"],
+					resolver: { name: "consoleLog", params: { text: "message3" } },
+				},
+				printNumber: {
+					requires: ["calcResult"],
+					resolver: { name: "consoleNumber", params: { number: "calcResult" } },
+				},
+			},
+			// options: {
+			// 	resolverAutomapResults: false,
+			// },
+		},
+		{},
+		["calcResult", "message3"], // 途中結果を受け取ることもできる
+		{
+			provideMsg1: ProvideMessage1,
+			provideMsg2: ProvideMessage2,
+			provideMsg3: ProvideMessage3,
+			provideNumber1: ProvideNumber1,
+			consoleLog: ConsoleLog,
+			calculate: Calculate,
+			consoleNumber: ConsoleNumber,
+		},
+	);
+
+	console.log("ENDPOINT: 並行処理フロー完了:", JSON.stringify(result, null, 2));
+
+	return c.json(result);
+});
+
+// 最も基本的なFlowedテスト
+app.get("/api/basic", async (c) => {
+	console.log("BASIC: 基本テスト開始");
+
+	const basicFlow = {
+		tasks: {
+			task1: {
+				provides: ["myResult"],
+				resolver: {
+					name: "flowed::Noop",
+				},
+			},
+		},
+	};
+
+	try {
+		console.log("BASIC: フロー実行開始");
+		const result = await FlowManager.run(basicFlow, {}, ["myResult"]);
+		console.log("BASIC: フロー完了:", JSON.stringify(result, null, 2));
+
+		return c.json({
+			success: true,
+			result: result,
+		});
+	} catch (error) {
+		console.error("BASIC: エラー:", error);
+		return c.json({ success: false, error: (error as Error).message }, 500);
+	}
 });
 
 // 静的ファイルの提供
